@@ -1,0 +1,96 @@
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Okul Kütüphanesi Yönetim Sistemi</title>
+  <style>
+    :root {
+      --primary: #174a7e;
+      --background: #f2f6fb;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      background: var(--background);
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      padding: 35px 28px;
+      border-radius: 20px;
+      background: var(--card);
+      box-shadow: 0 12px 35px #174a7e18;
+      text-align: center;
+    }
+    .logo { font-size: 56px; }
+    h1 { color: var(--primary); font-size: 25px; }
+    p { color: #64748b; }
+    input, button {
+      width: 100%;
+      padding: 15px;
+      margin-top: 14px;
+      border-radius: 10px;
+      font-size: 15px;
+    }
+    input { border: 1px solid #cbd5e1; }
+    button {
+      background: var(--primary);
+      color: white;
+      border: 0;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:disabled { opacity: .6; cursor: wait; }
+    .message {
+      margin-top: 15px;
+      font-size: 14px;
+      min-height: 20px;
+    }
+    .error { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="logo">📚</div>
+    <h1>Okul Kütüphanesi</h1>
+    <p>Yönetim Sistemine Hoş Geldiniz</p>
+
+    <form id="loginForm">
+      <input id="email" type="email"
+        placeholder="E-posta adresiniz"
+        autocomplete="username" required>
+
+      <input id="password" type="password"
+        placeholder="Şifreniz"
+        autocomplete="current-password" required>
+
+      <button id="loginButton" type="submit">
+        Giriş Yap
+      </button>
+    </form>
+
+    <div id="message" class="message"
+      role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    document.getElementById("loginForm")
+      .addEventListener("submit", function(event) {
+        event.preventDefault();
+
+        const message = document.getElementById("message");
+        message.className = "message";
+        message.textContent =
+          "Giriş ekranı çalışıyor. Supabase bağlantısı sonraki adımda yapılacak.";
+      });
+  </script>
+</body>
+</html>
