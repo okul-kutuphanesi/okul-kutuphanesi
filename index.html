@@ -81,16 +81,53 @@
       role="status" aria-live="polite"></div>
   </main>
 
-  <script>
-    document.getElementById("loginForm")
-      .addEventListener("submit", function(event) {
-        event.preventDefault();
+<script type="module">
+  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-        const message = document.getElementById("message");
-        message.className = "message";
-        message.textContent =
-          "Giriş ekranı çalışıyor. Supabase bağlantısı sonraki adımda yapılacak.";
+  const SUPABASE_URL = "https://eiigjfmriawycgmkoeyc.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_Dqr44bblFcEgWBNJx-bkSw_cc8UV0m2";
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const form = document.getElementById("loginForm");
+  const button = document.getElementById("loginButton");
+  const message = document.getElementById("message");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    button.disabled = true;
+    button.textContent = "Giriş yapılıyor...";
+    message.className = "message";
+    message.textContent = "";
+
+    try {
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
       });
-  </script>
+
+      if (error) throw error;
+
+      if (!data.user) {
+        throw new Error("Kullanıcı bilgisi alınamadı.");
+      }
+
+      message.textContent = "Giriş başarılı! Yönetim paneli hazırlanıyor.";
+    } catch (error) {
+      message.className = "message error";
+      message.textContent = error.message === "Invalid login credentials"
+        ? "E-posta veya şifre hatalı."
+        : "Giriş yapılamadı: " + error.message;
+    } finally {
+      button.disabled = false;
+      button.textContent = "Giriş Yap";
+    }
+  });
+</script>
+
 </body>
 </html>
