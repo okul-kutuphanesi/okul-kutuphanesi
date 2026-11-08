@@ -116,7 +116,20 @@
         throw new Error("Kullanıcı bilgisi alınamadı.");
       }
 
-      message.textContent = "Giriş başarılı! Yönetim paneli hazırlanıyor.";
+const { data: adminData, error: adminError } = await supabaseClient
+  .from("system_admins")
+  .select("user_id")
+  .eq("user_id", data.user.id)
+  .maybeSingle();
+
+if (adminError) throw adminError;
+
+if (adminData) {
+  message.textContent = "Hoş geldiniz Süper Yönetici! 👑";
+} else {
+  message.textContent = "Giriş başarılı. Yönetici yetkiniz bulunmuyor.";
+}
+
     } catch (error) {
       message.className = "message error";
       message.textContent = error.message === "Invalid login credentials"
