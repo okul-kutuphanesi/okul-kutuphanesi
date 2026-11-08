@@ -116,7 +116,7 @@
         throw new Error("Kullanıcı bilgisi alınamadı.");
       }
 
-const { data: adminData, error: adminError } = await supabaseClient
+const { data: adminData, error: adminError } = await supabase
   .from("system_admins")
   .select("user_id")
   .eq("user_id", data.user.id)
