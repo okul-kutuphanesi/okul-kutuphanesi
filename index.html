@@ -312,23 +312,24 @@
       finally{setBusy('lookupIsbn',false,'ISBN Ara');}
     });
 
-    // Ortak kamera altyapısı: BarcodeDetector gerektirmez, HTML5 QR/Barcode tarayıcı kullanır.
+    // Ortak canlı barkod motoru: kitap ekleme, arama, ödünç ve iade.
+    // Kamera modülü dışında kullanıcı yetkileri ve veritabanı işlemleri değiştirilmez.
     let scannerLibraryPromise=null;
     function ensureScannerLibrary(){
-      if(window.Html5Qrcode)return Promise.resolve(window.Html5Qrcode);
+      if(window.ZXingBrowser?.BrowserMultiFormatReader)return Promise.resolve(window.ZXingBrowser);
       if(scannerLibraryPromise)return scannerLibraryPromise;
       scannerLibraryPromise=new Promise((resolve,reject)=>{
         const script=document.createElement('script');
-        script.src='https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
-        script.onload=()=>window.Html5Qrcode?resolve(window.Html5Qrcode):reject(Error('Tarayıcı kütüphanesi yüklenemedi.'));
-        script.onerror=()=>reject(Error('Barkod okuyucu yüklenemedi. İnternet bağlantısını veya içerik engelleyiciyi kontrol edin.'));
+        script.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js';
+        script.onload=()=>window.ZXingBrowser?.BrowserMultiFormatReader?resolve(window.ZXingBrowser):reject(Error('ZXing barkod motoru başlatılamadı.'));
+        script.onerror=()=>reject(Error('Barkod motoru indirilemedi. İnternet bağlantısını kontrol edin.'));
         document.head.appendChild(script);
       }).catch(e=>{scannerLibraryPromise=null;throw e;});
       return scannerLibraryPromise;
     }
     function scannerError(e){
       const name=String(e?.name||''),msg=String(e?.message||e||'');
-      if(name==='NotAllowedError'||/permission|denied|izin/i.test(msg))return 'Kamera izni reddedildi. Telefonun tarayıcı ayarlarından kamera izni verin.';
+      if(name==='NotAllowedError'||/permission|denied|izin/i.test(msg))return 'Kamera izni reddedildi. Tarayıcı ayarlarından kamera izni verin.';
       if(name==='NotFoundError'||/notfound|no camera|no cameras/i.test(msg))return 'Kullanılabilir kamera bulunamadı.';
       if(name==='NotReadableError'||/notreadable|could not start video/i.test(msg))return 'Kamera başka bir uygulama tarafından kullanılıyor olabilir.';
       return msg||'Bilinmeyen kamera hatası';
@@ -336,22 +337,28 @@
     async function startScanner(elementId,onRead){
       if(!window.isSecureContext)throw Error('Kamera için HTTPS bağlantısı gereklidir.');
       if(!navigator.mediaDevices?.getUserMedia)throw Error('Tarayıcı kamera erişimini desteklemiyor.');
-      const Reader=await ensureScannerLibrary();
-      const reader=new Reader(elementId,{verbose:false,formatsToSupport:[
-        window.Html5QrcodeSupportedFormats?.EAN_13,window.Html5QrcodeSupportedFormats?.EAN_8,
-        window.Html5QrcodeSupportedFormats?.UPC_A,window.Html5QrcodeSupportedFormats?.UPC_E,
-        window.Html5QrcodeSupportedFormats?.CODE_128,window.Html5QrcodeSupportedFormats?.CODE_39,
-        window.Html5QrcodeSupportedFormats?.ITF,window.Html5QrcodeSupportedFormats?.CODABAR,
-        window.Html5QrcodeSupportedFormats?.QR_CODE
-      ].filter(x=>x!==undefined)});
-      const config={fps:10,aspectRatio:1.777778};
+      const ZXing=await ensureScannerLibrary();
+      const host=$(elementId);
+      host.replaceChildren();
+      const video=document.createElement('video');
+      video.setAttribute('playsinline','');video.setAttribute('autoplay','');
+      video.muted=true;video.autoplay=true;video.playsInline=true;
+      video.style.cssText='width:100%;max-height:350px;object-fit:contain;background:#101c2b;border-radius:10px';
+      host.append(video);
+      const reader=new ZXing.BrowserMultiFormatReader(undefined,{delayBetweenScanAttempts:120,delayBetweenScanSuccess:350});
+      const state={controls:null,stopped:false,isScanning:true,stop(){this.stopped=true;this.isScanning=false;try{this.controls?.stop();}catch(_){}try{video.pause();}catch(_){}for(const track of video.srcObject?.getTracks?.()||[])track.stop();video.srcObject=null;}};
       try{
-        try{await reader.start({facingMode:'environment'},config,onRead,()=>{});}
-        catch(first){await reader.start({facingMode:'user'},config,onRead,()=>{});}
-        return reader;
-      }catch(e){try{await reader.clear();}catch(_){}throw e;}
+        const controls=await reader.decodeFromConstraints({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}},video,(result,error)=>{
+          if(state.stopped||!result)return;
+          const value=result.getText?.()||String(result.text||'');
+          if(value){state.stopped=true;Promise.resolve(onRead(value)).catch(err=>console.error('Barkod işlem hatası',err));}
+        });
+        state.controls=controls;
+        if(state.stopped)state.stop();
+        return state;
+      }catch(e){state.stop();host.replaceChildren();throw e;}
     }
-    async function disposeScanner(reader){if(!reader)return;try{if(reader.isScanning)await reader.stop();}catch(_){}try{await reader.clear();}catch(_){}}
+    async function disposeScanner(reader){if(!reader)return;try{reader.stop();}catch(_){}}
     let cameraReader=null,cameraStarting=false,cameraPurpose='entry',cameraSession=0;
     async function stopCamera(){cameraSession++;const reader=cameraReader;cameraReader=null;cameraStarting=false;$('cameraBox').classList.add('hidden');await disposeScanner(reader);}
     async function openBookCamera(){
