@@ -333,24 +333,53 @@
       if(name==='NotReadableError'||/notreadable|could not start video/i.test(msg))return 'Kamera başka bir uygulama tarafından kullanılıyor olabilir.';
       return msg||'Bilinmeyen kamera hatası';
     }
-    async function startScanner(elementId,onRead){
-      if(!window.isSecureContext)throw Error('Kamera için HTTPS bağlantısı gereklidir.');
-      if(!navigator.mediaDevices?.getUserMedia)throw Error('Tarayıcı kamera erişimini desteklemiyor.');
-      const Reader=await ensureScannerLibrary();
-      const reader=new Reader(elementId,{verbose:false,formatsToSupport:[
-        window.Html5QrcodeSupportedFormats?.EAN_13,window.Html5QrcodeSupportedFormats?.EAN_8,
-        window.Html5QrcodeSupportedFormats?.UPC_A,window.Html5QrcodeSupportedFormats?.UPC_E,
-        window.Html5QrcodeSupportedFormats?.CODE_128,window.Html5QrcodeSupportedFormats?.CODE_39,
-        window.Html5QrcodeSupportedFormats?.ITF,window.Html5QrcodeSupportedFormats?.CODABAR,
-        window.Html5QrcodeSupportedFormats?.QR_CODE
-      ].filter(x=>x!==undefined)});
-      const config={fps:10,aspectRatio:1.777778};
-      try{
-        try{await reader.start({facingMode:'environment'},config,onRead,()=>{});}
-        catch(first){await reader.start({facingMode:'user'},config,onRead,()=>{});}
-        return reader;
-      }catch(e){try{await reader.clear();}catch(_){}throw e;}
-    }
+     // iPhone/Safari: EAN-13 için ZXing tabanlı tarama kullan; native BarcodeDetector'a bağımlı kalma.
+     // Kareye yakın tarama alanı ve otomatik video oranı, kitap arkasındaki barkodu kadraja almayı kolaylaştırır.
+     async function startScanner(elementId,onRead){
+       if(!window.isSecureContext)throw Error('Kamera için HTTPS bağlantısı gereklidir.');
+       if(!navigator.mediaDevices?.getUserMedia)throw Error('Tarayıcı kamera erişimini desteklemiyor.');
+       const Reader=await ensureScannerLibrary();
+       const formats=[
+         window.Html5QrcodeSupportedFormats?.EAN_13,
+         window.Html5QrcodeSupportedFormats?.EAN_8,
+         window.Html5QrcodeSupportedFormats?.UPC_A,
+         window.Html5QrcodeSupportedFormats?.UPC_E,
+         window.Html5QrcodeSupportedFormats?.CODE_128,
+         window.Html5QrcodeSupportedFormats?.CODE_39,
+         window.Html5QrcodeSupportedFormats?.ITF,
+         window.Html5QrcodeSupportedFormats?.CODABAR,
+         window.Html5QrcodeSupportedFormats?.QR_CODE
+       ].filter(x=>x!==undefined);
+       const reader=new Reader(elementId,{
+         verbose:false,
+         formatsToSupport:formats,
+         useBarCodeDetectorIfSupported:false,
+         experimentalFeatures:{useBarCodeDetectorIfSupported:false}
+       });
+       // Mobil Safari'de 16:9 sabitlemesi tarama alanını daraltabiliyor.
+       const config={
+         fps:15,
+         qrbox:(width,height)=>({
+           width:Math.max(120,Math.min(Math.floor(width*0.92),420)),
+           height:Math.max(90,Math.min(Math.floor(height*0.65),220))
+         }),
+         disableFlip:true
+       };
+       try{
+         try{
+           await reader.start({facingMode:'environment'},config,onRead,()=>{});
+         }catch(first){
+           // Ön kamera yerine mümkünse cihaz listesinden arka kamerayı seç.
+           let cameras=[];
+           try{cameras=await Reader.getCameras();}catch(_){}
+           const back=cameras.find(c=>/back|rear|environment|arka|arrière|rück/i.test(c.label||''));
+           const fallback=back||cameras[cameras.length-1];
+           if(!fallback)throw first;
+           await reader.start(fallback.id,config,onRead,()=>{});
+         }
+         return reader;
+       }catch(e){try{await reader.clear();}catch(_){}throw e;}
+     }
     async function disposeScanner(reader){if(!reader)return;try{if(reader.isScanning)await reader.stop();}catch(_){}try{await reader.clear();}catch(_){}}
     let cameraReader=null,cameraStarting=false,cameraPurpose='entry',cameraSession=0;
     async function stopCamera(){cameraSession++;const reader=cameraReader;cameraReader=null;cameraStarting=false;$('cameraBox').classList.add('hidden');await disposeScanner(reader);}
@@ -377,7 +406,7 @@
         });
         if(session!==cameraSession){await disposeScanner(reader);return;}
         cameraReader=reader;
-        $('cameraStatus').textContent='ISBN veya kitap barkodunu kameraya gösterin.';
+        $('cameraStatus').textContent='Barkodun tüm çizgilerini yatay şekilde tarama çerçevesine yerleştirin. ISBN için 13 haneli EAN-13 barkodunu gösterin.';
       }catch(e){if(session===cameraSession){$('cameraStatus').textContent='Kamera açılamadı: '+scannerError(e);showNotice('Kamera açılamadı: '+scannerError(e),'error');}}
       finally{if(session===cameraSession)cameraStarting=false;}
     }
@@ -423,7 +452,7 @@
         });
         if(session!==loanScanSession){await disposeScanner(reader);return;}
         loanScanReader=reader;
-        $('loanScanStatus').textContent='Kitap barkodunu veya ISBN numarasını kameraya gösterin.';
+        $('loanScanStatus').textContent='Kitap barkodunun tamamını tarama çerçevesine yatay yerleştirin.';
       }catch(e){if(session===loanScanSession){$('loanScanStatus').textContent='Kamera açılamadı: '+scannerError(e);showNotice('Kamera açılamadı: '+scannerError(e),'error');}}
       finally{if(session===loanScanSession)loanScanStarting=false;}
     }
