@@ -314,62 +314,70 @@
       finally{setBusy('lookupIsbn',false,'ISBN Ara');}
     });
 
-    // Ortak kamera altyapısı: BarcodeDetector gerektirmez, HTML5 QR/Barcode tarayıcı kullanır.
+    // Tek tarayıcı motoru: ZXing. Kitap kayıt, arama, ödünç ve iade aynı motoru kullanır.
+    // Fotoğraf çekimi yoktur; iPhone Safari ve Android Chrome'da canlı video kullanılır.
     let scannerLibraryPromise=null;
     function ensureScannerLibrary(){
-      if(window.Html5Qrcode)return Promise.resolve(window.Html5Qrcode);
+      if(window.ZXing?.BrowserMultiFormatReader)return Promise.resolve(window.ZXing);
       if(scannerLibraryPromise)return scannerLibraryPromise;
       scannerLibraryPromise=new Promise((resolve,reject)=>{
         const script=document.createElement('script');
-        script.src='https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
-        script.onload=()=>window.Html5Qrcode?resolve(window.Html5Qrcode):reject(Error('Tarayıcı kütüphanesi yüklenemedi.'));
-        script.onerror=()=>reject(Error('Barkod okuyucu yüklenemedi. İnternet bağlantısını veya içerik engelleyiciyi kontrol edin.'));
+        script.src='https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+        script.onload=()=>window.ZXing?.BrowserMultiFormatReader?resolve(window.ZXing):reject(Error('ZXing barkod motoru başlatılamadı.'));
+        script.onerror=()=>reject(Error('Barkod motoru yüklenemedi. İnternet bağlantısını kontrol edin.'));
         document.head.appendChild(script);
       }).catch(e=>{scannerLibraryPromise=null;throw e;});
       return scannerLibraryPromise;
     }
     function scannerError(e){
       const name=String(e?.name||''),msg=String(e?.message||e||'');
-      if(name==='NotAllowedError'||/permission|denied|izin/i.test(msg))return 'Kamera izni reddedildi. Telefonun tarayıcı ayarlarından kamera izni verin.';
+      if(name==='NotAllowedError'||/permission|denied|izin/i.test(msg))return 'Kamera izni reddedildi. Tarayıcıdan kamera izni verin.';
       if(name==='NotFoundError'||/notfound|no camera|no cameras/i.test(msg))return 'Kullanılabilir kamera bulunamadı.';
       if(name==='NotReadableError'||/notreadable|could not start video/i.test(msg))return 'Kamera başka bir uygulama tarafından kullanılıyor olabilir.';
       return msg||'Bilinmeyen kamera hatası';
     }
-    // iPhone Safari: barkod çözümleme için geniş yatay tarama alanı kullan.
-    // Yüksek çözünürlüklü videoConstraints iOS'ta kameranın otomatik odağını bozabildiği için kullanılmaz.
     async function startScanner(elementId,onRead){
       if(!window.isSecureContext)throw Error('Kamera için HTTPS bağlantısı gereklidir.');
       if(!navigator.mediaDevices?.getUserMedia)throw Error('Tarayıcı kamera erişimini desteklemiyor.');
-      const Reader=await ensureScannerLibrary();
-      const F=window.Html5QrcodeSupportedFormats||{};
-      const formats=[F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E,F.CODE_128,F.CODE_39,F.ITF,F.CODABAR,F.QR_CODE].filter(x=>x!==undefined);
-      const reader=new Reader(elementId,{
-        verbose:false,
-        formatsToSupport:formats,
-        useBarCodeDetectorIfSupported:false,
-        experimentalFeatures:{useBarCodeDetectorIfSupported:false}
-      });
-      const config={
-        fps:12,
-        disableFlip:true,
-        // Çizgili barkodlar için olabildiğince geniş, yatay bir tarama alanı.
-        qrbox:(w,h)=>({width:Math.max(1,Math.floor(w*0.94)),height:Math.max(1,Math.floor(h*0.75))})
+      const ZXing=await ensureScannerLibrary();
+      const formats=['EAN_13','EAN_8','UPC_A','UPC_E','CODE_128','CODE_39','ITF','CODABAR','QR_CODE']
+        .map(name=>ZXing.BarcodeFormat[name]).filter(v=>v!==undefined);
+      const hints=new Map([[ZXing.DecodeHintType.POSSIBLE_FORMATS,formats],[ZXing.DecodeHintType.TRY_HARDER,true]]);
+      const reader=new ZXing.BrowserMultiFormatReader(hints,180);
+      const host=document.getElementById(elementId);
+      host.replaceChildren();
+      const video=document.createElement('video');
+      video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');
+      video.setAttribute('autoplay','');video.setAttribute('muted','');
+      video.muted=true;video.autoplay=true;
+      video.style.cssText='display:block;width:100%;max-height:58vh;object-fit:contain;background:#111;border-radius:10px';
+      host.appendChild(video);
+      const scanner={isScanning:false,stopped:false,async stop(){
+        this.stopped=true;try{reader.reset();}catch(_){}
+        if(video.srcObject){for(const track of video.srcObject.getTracks())track.stop();video.srcObject=null;}
+        this.isScanning=false;
+      },async clear(){await this.stop();host.replaceChildren();}};
+      let consumed=false;
+      const handle=(result)=>{
+        if(!result||consumed||scanner.stopped)return;
+        const value=String(result.getText?.()||'').trim();
+        if(!value)return;
+        consumed=true;
+        Promise.resolve(onRead(value)).catch(err=>showNotice('Barkod işlenemedi: '+scannerError(err),'error'));
       };
       try{
+        let deviceId;
         try{
-          await reader.start({facingMode:'environment'},config,onRead,()=>{});
-        }catch(first){
-          let cameras=[];
-          try{cameras=await Reader.getCameras();}catch(_){}
-          const back=cameras.find(c=>/back|rear|environment|arka|arrière|rück/i.test(c.label||''));
-          const fallback=back||cameras[cameras.length-1];
-          if(!fallback)throw first;
-          await reader.start(fallback.id,config,onRead,()=>{});
-        }
-        return reader;
-      }catch(e){try{await reader.clear();}catch(_){}throw e;}
+          const cameras=await ZXing.BrowserCodeReader.listVideoInputDevices();
+          const rear=cameras.find(c=>/back|rear|environment|arka|arrière|rück/i.test(c.label||''));
+          deviceId=(rear||cameras[cameras.length-1])?.deviceId;
+        }catch(_){}
+        await reader.decodeFromVideoDevice(deviceId||null,video,handle);
+        scanner.isScanning=true;
+        return scanner;
+      }catch(e){await scanner.clear();throw e;}
     }
-    async function disposeScanner(reader){if(!reader)return;try{if(reader.isScanning)await reader.stop();}catch(_){}try{await reader.clear();}catch(_){}}
+    async function disposeScanner(reader){if(!reader)return;try{await reader.stop();}catch(_){}try{await reader.clear();}catch(_){}}
     let cameraReader=null,cameraStarting=false,cameraPurpose='entry',cameraSession=0;
     async function stopCamera(){cameraSession++;const reader=cameraReader;cameraReader=null;cameraStarting=false;$('cameraBox').classList.add('hidden');await disposeScanner(reader);}
     async function openBookCamera(){
@@ -395,7 +403,7 @@
         });
         if(session!==cameraSession){await disposeScanner(reader);return;}
         cameraReader=reader;
-        $('cameraStatus').textContent='Barkodun çizgilerini yatay tutun; 10–20 cm mesafeden, netleşene kadar sabit bekleyin.';
+        $('cameraStatus').textContent='Kitabın arkasındaki çizgili barkodu kameraya gösterin. Kamera netleşince otomatik okunur.';
       }catch(e){if(session===cameraSession){$('cameraStatus').textContent='Kamera açılamadı: '+scannerError(e);showNotice('Kamera açılamadı: '+scannerError(e),'error');}}
       finally{if(session===cameraSession)cameraStarting=false;}
     }
@@ -442,7 +450,7 @@
         });
         if(session!==loanScanSession){await disposeScanner(reader);return;}
         loanScanReader=reader;
-        $('loanScanStatus').textContent='Kitap barkodunun tamamını tarama çerçevesine yatay yerleştirin.';
+        $('loanScanStatus').textContent='Kitap barkodunun tamamını kameraya gösterin; netleşince otomatik okunur.';
       }catch(e){if(session===loanScanSession){$('loanScanStatus').textContent='Kamera açılamadı: '+scannerError(e);showNotice('Kamera açılamadı: '+scannerError(e),'error');}}
       finally{if(session===loanScanSession)loanScanStarting=false;}
     }
